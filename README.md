@@ -1,10 +1,29 @@
-# 🌿 Smart Garden IoT - Hệ Thống Tưới Tiêu & Giám Sát Nông Nghiệp Thông Minh
+<div align="center">
+  <img src="logo.png" alt="Smart Garden Logo" width="120" />
+  
+  <h1> Smart Garden IoT</h1>
+  <p><b>Hệ Thống Tưới Tiêu & Giám Sát Nông Nghiệp Thông Minh</b></p>
+
+  <p>
+    <img src="https://img.shields.io/badge/ESP32-000000?style=for-the-badge&logo=espressif&logoColor=white" alt="ESP32" />
+    <img src="https://img.shields.io/badge/C++-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++" />
+    <img src="https://img.shields.io/badge/PlatformIO-F58220?style=for-the-badge&logo=PlatformIO&logoColor=white" alt="PlatformIO" />
+    <img src="https://img.shields.io/badge/MQTT-3C5280?style=for-the-badge&logo=mqtt&logoColor=white" alt="MQTT" />
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white" alt="HTML5" />
+    <img src="https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css3&logoColor=white" alt="CSS3" />
+    <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black" alt="JavaScript" />
+  </p>
+</div>
+
+<br/>
+
+## 📖 Tổng quan
 
 Chào mừng bạn đến với dự án **Smart Garden IoT**. Đây là một hệ thống nhúng toàn diện kết hợp công nghệ Internet of Things (IoT) để tự động hóa việc giám sát môi trường và điều khiển thiết bị tưới tiêu cho khu vườn. Dự án cung cấp cả giao diện phần cứng hiển thị trực quan và một ứng dụng Web bảng điều khiển (Dashboard) thời gian thực.
 
-![Smart Garden](logo.png)
-
-## 🚀 Tính năng nổi bật
+##  Tính năng nổi bật
 
 - **Tự động hóa thông minh (Auto Mode):** Tự động bật máy bơm khi đất khô và tắt khi đất đủ ẩm. Tự động bật đèn quang hợp (Grow LED) khi trời tối.
 - **Giám sát thời gian thực (Real-time Monitoring):** Cập nhật liên tục các thông số: Độ ẩm đất, Nhiệt độ & Độ ẩm không khí, Cường độ ánh sáng và Mức nước trong bồn chứa.
@@ -39,7 +58,7 @@ Chào mừng bạn đến với dự án **Smart Garden IoT**. Đây là một h
 
 ---
 
-## ⚙️ Sơ đồ chân kết nối (Pinout)
+##  Sơ đồ chân kết nối (Pinout)
 
 | Linh kiện | Chân trên ESP32 | Mô tả |
 | :--- | :--- | :--- |
@@ -56,7 +75,7 @@ Chào mừng bạn đến với dự án **Smart Garden IoT**. Đây là một h
 
 ---
 
-## 📖 Hướng dẫn sử dụng hệ thống
+##  Hướng dẫn sử dụng hệ thống
 
 ### 1. Khởi động hệ thống
 - Hệ thống được thiết kế để chạy trên phần mềm VS Code với tiện ích mở rộng **Wokwi Simulator**.

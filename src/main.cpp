@@ -1,38 +1,44 @@
 #include <Arduino.h>
 #include <Wire.h>
-#include <LiquidCrystal_I2C.h>
+#include <U8g2lib.h>
 #include <DHT.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-// ==== CHAN KET NOI ====
-#define PIN_DHT        13
-#define PIN_SOIL       34
-#define PIN_WATER      35
-#define PIN_LIGHT      32
-#define PIN_PUMP       14
-#define PIN_LED_GROW   27
+#include <ESP32Servo.h>
+// ==== CHAN KET NOI (Cấu hình cho ESP32 Thường) ====
+#define PIN_SOIL       32
+#define PIN_WATER      33
+#define PIN_LIGHT      34
+#define PIN_DHT        14
+#define PIN_PUMP       25
+#define PIN_LED_GROW   26
+#define PIN_SERVO      27
+#define PIN_BUZZER     13
+#define PIN_BTN        19
 
-#define PIN_BUZZER     25
-#define PIN_BTN        26
+// Ghi chú: Chân I2C mặc định của ESP32 là SDA = 21, SCL = 22
 
 // ==== THONG SO HE THONG ====
-#define DHTTYPE DHT22
+#define DHTTYPE DHT11
 int threshold_soil_low   = 40;
 int threshold_soil_high  = 70;
 int threshold_water_low  = 10;
-int threshold_light_low  = 1000;
+int threshold_light_low  = 30; // 30% ánh sáng
 float threshold_temp_high  = 35.0;
 float threshold_hum_high   = 80.0;
+float threshold_hum_low    = 40.0;
 
-// LCD 16x2 I2C (dia chi mac dinh 0x27)
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+// OLED (U8g2 - tuong thich ca SSD1306 va SH1106)
+// Neu man hinh van loi, thu doi dong duoi thanh:
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+// U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 DHT dht(PIN_DHT, DHTTYPE);
 
 // WiFi & MQTT
-const char* ssid = "Wokwi-GUEST";
-const char* password = "";
+const char* ssid = "Thuy An";
+const char* password = "thanh22888";
 
 const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
@@ -49,6 +55,12 @@ unsigned long lastReadTime = 0;
 unsigned long lastScreenSwitch = 0;
 int currentScreen = 0;
 
+Servo fanServo;
+int servoAngle = 0;
+int servoStep = 5;
+unsigned long lastServoUpdate = 0;
+bool isFanOn = false;
+
 // Button debounce variables
 bool lastBtnState = HIGH;
 bool btnState = HIGH;
@@ -64,6 +76,17 @@ int g_soil = 0;
 int g_water = 0;
 int g_light = 0;
 float temp_offset = 0.0; // Biến giả lập giảm nhiệt độ khi bật bơm
+float hum_offset = 0.0; // Biến giả lập giảm độ ẩm khi quạt chạy
+
+// Cấu trúc phân loại báo động
+enum AlarmType {
+  ALARM_NONE = 0,
+  ALARM_WATER,
+  ALARM_TEMP,
+  ALARM_SOIL,
+  ALARM_HUM
+};
+AlarmType currentAlarm = ALARM_NONE;
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message;
@@ -82,6 +105,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         isPumpOn = doc["value"].as<bool>();
       } else if (cmd == "led" && !isAutoMode) {
         isLedOn = doc["value"].as<bool>();
+      } else if (cmd == "fan" && !isAutoMode) {
+        isFanOn = doc["value"].as<bool>();
       } else if (cmd == "set_threshold_soil") {
         threshold_soil_low = doc["value"].as<int>();
       } else if (cmd == "set_threshold_temp") {
@@ -108,74 +133,71 @@ void reconnect() {
   }
 }
 
-// Ky tu dac biet: giot nuoc va mat troi
-byte dropIcon[8] = {
-  0b00100, 0b00100, 0b01110, 0b01110,
-  0b11111, 0b11111, 0b11111, 0b01110
-};
-byte sunIcon[8] = {
-  0b00100, 0b10101, 0b01110, 0b11111,
-  0b01110, 0b10101, 0b00100, 0b00000
-};
-byte leafIcon[8] = {
-  0b00010, 0b00110, 0b01110, 0b11110,
-  0b01110, 0b00110, 0b00010, 0b00000
-};
-
 void displayScreen(int screen) {
-  lcd.clear();
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x10_tf);
 
   switch (screen) {
     case 0: // Man hinh 1: Do am dat & Muc nuoc
-      lcd.setCursor(0, 0);
-      lcd.write(0); // drop icon
-      lcd.print("Dat:");
-      lcd.print(g_soil);
-      lcd.print("%");
+      u8g2.drawStr(0, 10, "=== VUON THONG MINH ===");
 
-      lcd.setCursor(9, 0);
-      lcd.print("Nc:");
-      lcd.print(g_water);
-      lcd.print("%");
+      u8g2.setCursor(0, 24);
+      u8g2.print("Dat: ");
+      u8g2.print(g_soil);
+      u8g2.print("%");
+      u8g2.setCursor(64, 24);
+      u8g2.print("Nc: ");
+      u8g2.print(g_water);
+      u8g2.print("%");
 
-      lcd.setCursor(0, 1);
-      lcd.print("Bom:");
-      lcd.print(isPumpOn ? "BAT " : "TAT ");
-      lcd.print("Den:");
-      lcd.print(isLedOn ? "BAT" : "TAT");
+      u8g2.setCursor(0, 38);
+      u8g2.print("Bom:");
+      u8g2.print(isPumpOn ? "BAT" : "TAT");
+      u8g2.setCursor(64, 38);
+      u8g2.print("Den:");
+      u8g2.print(isLedOn ? "BAT" : "TAT");
+
+      u8g2.setCursor(0, 52);
+      u8g2.print(isAutoMode ? "[TU DONG]" : "[THU CONG]");
       break;
 
-    case 1: // Man hinh 2: Nhiet do & Do am khong khi
-      lcd.setCursor(0, 0);
-      lcd.print("Nhiet:");
-      lcd.print(g_temp, 1);
-      lcd.print((char)223); // Ky tu do (°)
-      lcd.print("C");
+    case 1: // Man hinh 2: Nhiet do & Do am & Anh sang
+      u8g2.drawStr(0, 10, "==== THOI TIET ====");
 
-      lcd.setCursor(0, 1);
-      lcd.print("DoAm KK:");
-      lcd.print(g_hum, 1);
-      lcd.print("%");
+      u8g2.setCursor(0, 26);
+      u8g2.print("Nhiet do: ");
+      u8g2.print(g_temp, 1);
+      u8g2.print(" C");
+
+      u8g2.setCursor(0, 40);
+      u8g2.print("Do am  : ");
+      u8g2.print(g_hum, 1);
+      u8g2.print(" %");
+
+      u8g2.setCursor(0, 54);
+      u8g2.print("Sang   : ");
+      u8g2.print(g_light);
+      u8g2.print(" %");
       break;
 
-    case 2: // Man hinh 3: Anh sang & Canh bao
-      lcd.setCursor(0, 0);
-      lcd.write(1); // sun icon
-      lcd.print("Sang:");
-      lcd.print(g_light);
+    case 2: // Man hinh 3: Canh bao
+      u8g2.drawStr(10, 10, "== CANH BAO ==");
 
-      lcd.setCursor(0, 1);
-      if (g_water <= threshold_water_low && g_soil < threshold_soil_low) {
-        lcd.print("!! HET NUOC !!");
-      } else if (g_temp > threshold_temp_high) {
-        lcd.print("!! QUA NONG !!");
+      u8g2.setCursor(0, 35);
+      if (currentAlarm == ALARM_WATER) {
+        u8g2.print("  ! HET NUOC !");
+      } else if (currentAlarm == ALARM_TEMP) {
+        u8g2.print("  ! NHIET DO CAO !");
+      } else if (currentAlarm == ALARM_SOIL) {
+        u8g2.print("  ! DAT KHO !");
+      } else if (currentAlarm == ALARM_HUM) {
+        u8g2.print("  ! DO AM THAP !");
       } else {
-        lcd.write(2); // leaf icon
-        lcd.print(" He thong OK ");
-        lcd.write(2);
+        u8g2.print("  He thong OK");
       }
       break;
   }
+  u8g2.sendBuffer();
 }
 
 void setup() {
@@ -192,34 +214,38 @@ void setup() {
   digitalWrite(PIN_LED_GROW, LOW);
   digitalWrite(PIN_BUZZER, LOW);
 
+  // Setup cho ESP32Servo (cần thiết cho core mới)
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  fanServo.setPeriodHertz(50);
+  fanServo.attach(PIN_SERVO, 500, 2400);
+
   pinMode(PIN_SOIL, INPUT);
   pinMode(PIN_WATER, INPUT);
   pinMode(PIN_LIGHT, INPUT);
 
   dht.begin();
 
-  // Khoi tao LCD
-  lcd.init();
-  lcd.backlight();
-  lcd.createChar(0, dropIcon);
-  lcd.createChar(1, sunIcon);
-  lcd.createChar(2, leafIcon);
-
-  // Man hinh chao
-  lcd.setCursor(0, 0);
-  lcd.print("  SMART GARDEN  ");
-  lcd.setCursor(0, 1);
-  lcd.print("   Connecting   ");
+  // Khoi tao OLED (U8g2)
+  Wire.begin(); // SDA=21, SCL=22
+  u8g2.begin();
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_6x10_tf);
+  u8g2.drawStr(10, 28, "SMART GARDEN");
+  u8g2.drawStr(16, 44, "Connecting...");
+  u8g2.sendBuffer();
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(100);
   }
   
-  lcd.setCursor(0, 1);
-  lcd.print(" WiFi Connected ");
+  u8g2.clearBuffer();
+  u8g2.drawStr(6, 36, "WiFi Connected!");
+  u8g2.sendBuffer();
   delay(1000);
-  lcd.clear();
 
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(mqttCallback);
@@ -244,24 +270,22 @@ void loop() {
     int rawWater = analogRead(PIN_WATER);
     int rawLight = analogRead(PIN_LIGHT);
 
-    g_soil = map(rawSoil, 0, 4095, 0, 100);
-    g_water = map(rawWater, 0, 4095, 0, 100);
-    g_light = rawLight;
+    // Đảo ngược mapping: 0 -> 100, 4095 -> 0 
+    // Vì mặc định của Wokwi: vặn hết sang phải (xuôi kim đồng hồ) điện áp tiến về 0
+    g_soil = map(rawSoil, 0, 4095, 100, 0);
+    g_water = map(rawWater, 0, 4095, 100, 0);
+    
+    // Cảm biến ánh sáng LDR: giá trị raw càng lớn (kéo về bên trái) tức là càng tối
+    // Nên ta map lại thành phần trăm ánh sáng: 0 (tối) -> 100% (sáng)
+    g_light = map(rawLight, 0, 4095, 100, 0);
 
     if (isnan(h) || isnan(t)) {
       h = 0;
       t = 0;
     }
 
-    // Giả lập làm mát: Nếu bơm đang bật, nhiệt độ từ từ giảm xuống (tối đa giảm 10 độ)
-    if (isPumpOn && temp_offset < 10.0) {
-      temp_offset += 0.2; // Giảm 0.2 độ mỗi giây
-    } else if (!isPumpOn && temp_offset > 0.0) {
-      temp_offset -= 0.1; // Phục hồi nhiệt độ từ từ khi tắt bơm
-      if (temp_offset < 0) temp_offset = 0;
-    }
-
-    g_temp = t - temp_offset;
+    // Gán trực tiếp giá trị cảm biến thật
+    g_temp = t;
     g_hum = h;
 
     bool hasWarning = false;
@@ -274,16 +298,12 @@ void loop() {
           isPumpOn = true;
         } else {
           isPumpOn = false;
-          hasWarning = true;
-          Serial.println("[CANH BAO] MUC NUOC QUA THAP! Khong the bat may bom.");
         }
       } else if (g_soil > threshold_soil_high) {
         isPumpOn = false;
       } else {
         if (isPumpOn && g_water <= threshold_water_low) {
           isPumpOn = false;
-          hasWarning = true;
-          Serial.println("[CANH BAO KHAN] Het nuoc trong luc dang tuoi! Ngat bom.");
         }
       }
 
@@ -293,27 +313,34 @@ void loop() {
       } else {
         isLedOn = false;
       }
+
+      // Logic quạt thông gió
+      isFanOn = (g_hum > threshold_hum_high);
     } else {
       // Che do thu cong: kiem tra an toan
       if (isPumpOn && g_water <= threshold_water_low) {
         isPumpOn = false;
-        hasWarning = true;
       }
     }
 
-    // Nếu nhiệt độ cao nhưng máy bơm đang bật (đang tưới/làm mát) thì im lặng còi
-    if (g_temp > threshold_temp_high && !isPumpOn) {
-      hasWarning = true;
-    }
-
-    if (hasWarning) {
-      tone(PIN_BUZZER, 1000, 200);
-    } else if (g_water <= 20 && g_water > 10) {
-      // Cảnh báo sắp hết nước (Mực nước từ 11% đến 20%)
-      // Kêu tít... tít... chậm hơn để phân biệt với lỗi Hết nước
-      if (currentMillis % 2000 < 200) {
-        tone(PIN_BUZZER, 1500, 100);
-      }
+    // --- TỔNG HỢP CÁC LỖI CẦN BÁO ĐỘNG ---
+    currentAlarm = ALARM_NONE; // Reset trạng thái
+    
+    // Đánh giá lỗi theo mức độ ưu tiên (Cái nào nguy hiểm hơn đặt lên trước)
+    if (g_water <= 20) {
+      currentAlarm = ALARM_WATER; // Nước hết hoặc gần hết (Nguy hiểm nhất)
+    } 
+    else if (g_temp > threshold_temp_high + 2.0 && !isPumpOn) {
+      currentAlarm = ALARM_TEMP;  // Nhiệt độ quá cao (nóng hơn mức an toàn 2 độ)
+    } 
+    else if (g_temp < 10.0) {
+      currentAlarm = ALARM_TEMP;  // Nhiệt độ quá thấp (lạnh dưới 10 độ)
+    } 
+    else if (g_soil < (threshold_soil_low - 15) || g_soil > (threshold_soil_high + 15)) {
+      currentAlarm = ALARM_SOIL;  // Đất quá khô (<25) hoặc quá ẩm (>85) - Tránh kêu khi chỉ vừa lố 1 xíu
+    } 
+    else if (g_hum > threshold_hum_high + 5.0 || g_hum < threshold_hum_low - 5.0) {
+      currentAlarm = ALARM_HUM;   // Độ ẩm không khí quá cao (>85) hoặc quá thấp (<35)
     }
 
     digitalWrite(PIN_PUMP, isPumpOn ? HIGH : LOW);
@@ -329,6 +356,7 @@ void loop() {
     doc["light"] = g_light;
     doc["pump"] = isPumpOn;
     doc["led"] = isLedOn;
+    doc["fan"] = isFanOn;
     doc["auto"] = isAutoMode;
     
     String jsonString;
@@ -336,11 +364,36 @@ void loop() {
     client.publish(topic_state, jsonString.c_str());
 
     // In ra Serial de theo doi
-    Serial.printf("Soil:%d%% Water:%d%% Temp:%.1fC Hum:%.1f%% Light:%d | Pump:%s LED:%s Mode:%s\n",
+    Serial.printf("Soil:%d%% Water:%d%% Temp:%.1fC Hum:%.1f%% Light:%d | Pump:%s LED:%s Fan:%s Mode:%s\n",
       g_soil, g_water, g_temp, g_hum, g_light,
-      isPumpOn ? "ON" : "OFF", isLedOn ? "ON" : "OFF", isAutoMode ? "AUTO" : "MANUAL");
+      isPumpOn ? "ON" : "OFF", isLedOn ? "ON" : "OFF", isFanOn ? "ON" : "OFF", isAutoMode ? "AUTO" : "MANUAL");
   }
 
+  // Quét góc cho Servo (Quạt) không dùng delay
+  if (isFanOn) {
+    if (currentMillis - lastServoUpdate > 15) { // Quét nhanh hơn một chút
+      lastServoUpdate = currentMillis;
+      servoAngle += servoStep;
+      
+      // Phát tiếng "tạch tạch" mô phỏng cơ cấu cánh quạt
+      if (servoAngle % 20 == 0 && currentAlarm == ALARM_NONE) {
+        tone(PIN_BUZZER, 1500, 15); // Tiếng tạch nhẹ
+      }
+
+      if (servoAngle >= 180 || servoAngle <= 0) {
+        servoStep = -servoStep; // Đảo chiều quay (Quạt tuốc năng)
+        if (currentAlarm == ALARM_NONE) {
+          tone(PIN_BUZZER, 2000, 30); // Tiếng cạch mạnh khi đảo chiều
+        }
+      }
+      fanServo.write(servoAngle);
+    }
+  } else {
+    if (servoAngle != 0) {
+      servoAngle = 0;
+      fanServo.write(0);
+    }
+  }
 
   // Xu ly Nut nhan voi chong doi
   bool reading = digitalRead(PIN_BTN);
@@ -366,6 +419,7 @@ void loop() {
         doc["light"] = g_light;
         doc["pump"] = isPumpOn;
         doc["led"] = isLedOn;
+        doc["fan"] = isFanOn;
         doc["auto"] = isAutoMode;
         
         String jsonString;
@@ -375,6 +429,35 @@ void loop() {
     }
   }
   lastBtnState = reading;
+
+  // Xử lý còi hú liên tục đa âm sắc không dùng delay
+  static int lastTone = -1;
+  int currentTone = -1; // -1 nghĩa là tắt còi
+
+  if (currentAlarm == ALARM_WATER) {
+    // Tiếng bíp dồn dập, réo rắt báo hiệu khẩn cấp (Hết nước): Tít tít tít...
+    currentTone = (currentMillis % 400 < 100) ? 2500 : -1;
+  } else if (currentAlarm == ALARM_TEMP) {
+    // Tiếng còi xe cứu thương (Nhiệt độ bất thường): Ò... e... ò... e...
+    currentTone = (currentMillis % 1000 < 500) ? 800 : 1000;
+  } else if (currentAlarm == ALARM_SOIL) {
+    // Tiếng lỗi hệ thống trầm đục (Độ ẩm đất): Bíp -------- Bíp --------
+    currentTone = (currentMillis % 2000 < 500) ? 300 : -1;
+  } else if (currentAlarm == ALARM_HUM) {
+    // Tiếng bíp đều đặn (Độ ẩm không khí): Tít ... Tít ...
+    currentTone = (currentMillis % 1000 < 200) ? 1200 : -1;
+  }
+
+  // Cập nhật âm thanh nếu có sự thay đổi
+  if (currentTone != lastTone) {
+    if (currentTone == -1) {
+      noTone(PIN_BUZZER);
+      digitalWrite(PIN_BUZZER, LOW); // Đảm bảo còi tắt hoàn toàn
+    } else {
+      tone(PIN_BUZZER, currentTone);
+    }
+    lastTone = currentTone;
+  }
 
   // Chuyen man hinh LCD moi 2 giay
   if (currentMillis - lastScreenSwitch >= SCREEN_INTERVAL) {

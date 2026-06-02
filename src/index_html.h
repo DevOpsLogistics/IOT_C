@@ -1,4 +1,4 @@
-﻿#ifndef INDEX_HTML_H
+#ifndef INDEX_HTML_H
 #define INDEX_HTML_H
 
 #include <Arduino.h>
@@ -1125,6 +1125,17 @@ const char index_html[] PROGMEM = R"rawliteral(
                             <span class="track"></span>
                         </label>
                     </div>
+                    <div class="grow-led-row" style="margin-top: 12px; border-top: 1px dashed var(--outline-variant); padding-top: 12px;">
+                        <div class="grow-led-left">
+                            <span class="material-symbols-outlined" id="fan-icon">mode_fan</span>
+                            <span class="label">Quáº¡t thÃ´ng giÃ³</span>
+                            <span class="auto-badge" id="fan-auto-badge">Tá»± Ä‘á»™ng</span>
+                        </div>
+                        <label class="md-switch">
+                            <input type="checkbox" id="sw-fan">
+                            <span class="track"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -1186,9 +1197,13 @@ const char index_html[] PROGMEM = R"rawliteral(
                     <span style="font-weight: 600; color: var(--on-surface-variant);">MÃ¡y bÆ¡m nÆ°á»›c</span>
                     <span id="pump-status" style="color: var(--primary); font-weight: bold;">--</span>
                 </div>
-                <div style="display:flex; justify-content: space-between; padding: 20px;">
+                <div style="display:flex; justify-content: space-between; padding: 20px; border-bottom: 1px solid var(--outline-variant);">
                     <span style="font-weight: 600; color: var(--on-surface-variant);">ÄÃ¨n quang há»£p</span>
                     <span id="led-status" style="color: var(--primary); font-weight: bold;">--</span>
+                </div>
+                <div style="display:flex; justify-content: space-between; padding: 20px;">
+                    <span style="font-weight: 600; color: var(--on-surface-variant);">Quáº¡t thÃ´ng giÃ³ (Servo)</span>
+                    <span id="fan-status" style="color: var(--primary); font-weight: bold;">--</span>
                 </div>
             </div>
         </div>
@@ -1325,14 +1340,17 @@ const char index_html[] PROGMEM = R"rawliteral(
         const modeSwitch = $('mode-switch');
         const swPump = $('sw-pump');
         const swLed = $('sw-led');
+        const swFan = $('sw-fan'); // ThÃªm swFan
 
         let isPumpOn = false;
         let isLedOn = false;
+        let isFanOn = false;
         let isAutoMode = true;
 
         // Start with auto â†’ switches are read-only
         swPump.style.pointerEvents = 'none';
         swLed.style.pointerEvents = 'none';
+        swFan.style.pointerEvents = 'none';
 
         // ========== MQTT ==========
         const mqtt_server = "broker.hivemq.com";
@@ -1414,18 +1432,27 @@ const char index_html[] PROGMEM = R"rawliteral(
             $('led-auto-badge').style.color = isAutoMode
                 ? 'var(--on-primary-container)' : 'var(--tertiary)';
 
+            $('fan-auto-badge').textContent = isAutoMode ? 'Tá»± Ä‘á»™ng' : 'Thá»§ cÃ´ng';
+            $('fan-auto-badge').style.background = isAutoMode
+                ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
+            $('fan-auto-badge').style.color = isAutoMode
+                ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
             if (!isAutoMode) {
                 swPump.style.pointerEvents = 'auto';
                 swLed.style.pointerEvents = 'auto';
+                swFan.style.pointerEvents = 'auto';
             } else {
                 swPump.style.pointerEvents = 'none';
                 swLed.style.pointerEvents = 'none';
+                swFan.style.pointerEvents = 'none';
             }
             sendCommand('auto', isAutoMode);
         });
 
         swPump.addEventListener('change', () => { if (!isAutoMode) sendCommand('pump', swPump.checked); });
         swLed.addEventListener('change', () => { if (!isAutoMode) sendCommand('led', swLed.checked); });
+        swFan.addEventListener('change', () => { if (!isAutoMode) sendCommand('fan', swFan.checked); });
 
         // ========== SETTINGS & LOGS ==========
         function saveSetting(type) {
@@ -1475,12 +1502,14 @@ const char index_html[] PROGMEM = R"rawliteral(
             const light = data.light;
             isPumpOn = data.pump;
             isLedOn = data.led;
+            isFanOn = data.fan;
             isAutoMode = data.auto;
             
             // Sync switches if they were changed externally
             modeSwitch.checked = isAutoMode;
             swPump.checked = isPumpOn;
             swLed.checked = isLedOn;
+            swFan.checked = isFanOn;
 
             // --- Event Logging ---
             if(!isFirstUpdate) {
@@ -1512,12 +1541,21 @@ const char index_html[] PROGMEM = R"rawliteral(
                 ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
             $('led-auto-badge').style.color = isAutoMode
                 ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
+            $('fan-auto-badge').textContent = isAutoMode ? 'Tá»± Ä‘á»™ng' : 'Thá»§ cÃ´ng';
+            $('fan-auto-badge').style.background = isAutoMode
+                ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
+            $('fan-auto-badge').style.color = isAutoMode
+                ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
             if (!isAutoMode) {
                 swPump.style.pointerEvents = 'auto';
                 swLed.style.pointerEvents = 'auto';
+                swFan.style.pointerEvents = 'auto';
             } else {
                 swPump.style.pointerEvents = 'none';
                 swLed.style.pointerEvents = 'none';
+                swFan.style.pointerEvents = 'none';
             }
 
             // --- Soil Hero ---
@@ -1561,8 +1599,29 @@ const char index_html[] PROGMEM = R"rawliteral(
                 </div>`;
             }
 
-            // --- Lighting ---
+            // --- Lighting & Fan ---
             $('v-light').textContent = light.toLocaleString();
+
+            const fanIcon = $('fan-icon');
+            if (isFanOn) {
+                fanIcon.style.animation = 'spin 1s linear infinite';
+                fanIcon.style.color = 'var(--primary)';
+            } else {
+                fanIcon.style.animation = 'none';
+                fanIcon.style.color = 'inherit';
+            }
+
+            if (!$('spin-style')) {
+                const style = document.createElement('style');
+                style.id = 'spin-style';
+                style.innerHTML = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
+                document.head.appendChild(style);
+            }
+
+            $('mode-status').textContent = isAutoMode ? 'Tá»± Ä‘á»™ng' : 'Thá»§ cÃ´ng';
+            $('pump-status').textContent = isPumpOn ? 'Äang cháº¡y' : 'Táº¯t';
+            $('led-status').textContent = isLedOn ? 'Äang báº­t' : 'Táº¯t';
+            if ($('fan-status')) $('fan-status').textContent = isFanOn ? 'Äang cháº¡y' : 'Táº¯t';
 
             // --- Water Tank ---
             const tankCard = $('card-tank');

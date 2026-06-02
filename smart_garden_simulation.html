@@ -1119,6 +1119,17 @@
                             <span class="track"></span>
                         </label>
                     </div>
+                    <div class="grow-led-row" style="margin-top: 12px; border-top: 1px dashed var(--outline-variant); padding-top: 12px;">
+                        <div class="grow-led-left">
+                            <span class="material-symbols-outlined" id="fan-icon">mode_fan</span>
+                            <span class="label">Quạt thông gió</span>
+                            <span class="auto-badge" id="fan-auto-badge">Tự động</span>
+                        </div>
+                        <label class="md-switch">
+                            <input type="checkbox" id="sw-fan">
+                            <span class="track"></span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
@@ -1180,9 +1191,13 @@
                     <span style="font-weight: 600; color: var(--on-surface-variant);">Máy bơm nước</span>
                     <span id="pump-status" style="color: var(--primary); font-weight: bold;">--</span>
                 </div>
-                <div style="display:flex; justify-content: space-between; padding: 20px;">
+                <div style="display:flex; justify-content: space-between; padding: 20px; border-bottom: 1px solid var(--outline-variant);">
                     <span style="font-weight: 600; color: var(--on-surface-variant);">Đèn quang hợp</span>
                     <span id="led-status" style="color: var(--primary); font-weight: bold;">--</span>
+                </div>
+                <div style="display:flex; justify-content: space-between; padding: 20px;">
+                    <span style="font-weight: 600; color: var(--on-surface-variant);">Quạt thông gió (Servo)</span>
+                    <span id="fan-status" style="color: var(--primary); font-weight: bold;">--</span>
                 </div>
             </div>
         </div>
@@ -1319,14 +1334,17 @@
         const modeSwitch = $('mode-switch');
         const swPump = $('sw-pump');
         const swLed = $('sw-led');
+        const swFan = $('sw-fan'); // Thêm swFan
 
         let isPumpOn = false;
         let isLedOn = false;
+        let isFanOn = false;
         let isAutoMode = true;
 
         // Start with auto → switches are read-only
         swPump.style.pointerEvents = 'none';
         swLed.style.pointerEvents = 'none';
+        swFan.style.pointerEvents = 'none';
 
         // ========== MQTT ==========
         const mqtt_server = "broker.hivemq.com";
@@ -1408,18 +1426,27 @@
             $('led-auto-badge').style.color = isAutoMode
                 ? 'var(--on-primary-container)' : 'var(--tertiary)';
 
+            $('fan-auto-badge').textContent = isAutoMode ? 'Tự động' : 'Thủ công';
+            $('fan-auto-badge').style.background = isAutoMode
+                ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
+            $('fan-auto-badge').style.color = isAutoMode
+                ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
             if (!isAutoMode) {
                 swPump.style.pointerEvents = 'auto';
                 swLed.style.pointerEvents = 'auto';
+                swFan.style.pointerEvents = 'auto';
             } else {
                 swPump.style.pointerEvents = 'none';
                 swLed.style.pointerEvents = 'none';
+                swFan.style.pointerEvents = 'none';
             }
             sendCommand('auto', isAutoMode);
         });
 
         swPump.addEventListener('change', () => { if (!isAutoMode) sendCommand('pump', swPump.checked); });
         swLed.addEventListener('change', () => { if (!isAutoMode) sendCommand('led', swLed.checked); });
+        swFan.addEventListener('change', () => { if (!isAutoMode) sendCommand('fan', swFan.checked); });
 
         // ========== SETTINGS & LOGS ==========
         function saveSetting(type) {
@@ -1441,24 +1468,44 @@
             $('val-set-temp').textContent = e.target.value + "°C";
         });
 
-        function addLog(message, type="info") {
-            const container = $('logs-container');
-            const d = new Date();
-            const timeStr = d.toLocaleTimeString();
-            let color = "var(--on-surface-variant)";
-            if(type === "warning") color = "var(--error)";
-            if(type === "success") color = "var(--primary)";
+        let savedLogs = JSON.parse(localStorage.getItem('smart_garden_logs')) || [];
 
-            const item = document.createElement('div');
-            item.style = `padding: 12px; border-bottom: 1px solid var(--outline-variant); color: ${color}; font-weight: 500;`;
-            item.innerHTML = `[${timeStr}] ${message}`;
-            container.prepend(item);
+        function renderLogs() {
+            const container = $('logs-container');
+            if (!container) return;
+            container.innerHTML = '';
+            if (savedLogs.length === 0) {
+                container.innerHTML = '<div style="padding: 12px; color: var(--on-surface-variant);">Hệ thống đã sẵn sàng ghi nhận lịch sử...</div>';
+                return;
+            }
+            savedLogs.forEach(log => {
+                let color = "var(--on-surface-variant)";
+                if(log.type === "warning") color = "var(--error)";
+                if(log.type === "success") color = "var(--primary)";
+                const item = document.createElement('div');
+                item.style = `padding: 12px; border-bottom: 1px solid var(--outline-variant); color: ${color}; font-weight: 500;`;
+                item.innerHTML = `[${log.time}] ${log.message}`;
+                container.appendChild(item);
+            });
         }
 
-        // ========== UPDATE UI ==========
+        function addLog(message, type="info") {
+            const timeStr = new Date().toLocaleTimeString();
+            savedLogs.unshift({ time: timeStr, message: message, type: type });
+            if (savedLogs.length > 50) savedLogs.pop(); // Giữ tối đa 50 dòng
+            localStorage.setItem('smart_garden_logs', JSON.stringify(savedLogs));
+            renderLogs();
+        }
+
         let prevPump = false;
+        let prevLed = false;
+        let prevFan = false;
         let prevWaterWarning = false;
-        let prevTempWarning = false;
+        let prevTempHighWarning = false;
+        let prevTempLowWarning = false;
+        let prevSoilWarning = false;
+        let prevHumHighWarning = false;
+        let prevHumLowWarning = false;
         let isFirstUpdate = true;
 
         function updateUI(data) {
@@ -1469,33 +1516,88 @@
             const light = data.light;
             isPumpOn = data.pump;
             isLedOn = data.led;
+            isFanOn = data.fan;
             isAutoMode = data.auto;
-            
+
+
             // Sync switches if they were changed externally
             modeSwitch.checked = isAutoMode;
             swPump.checked = isPumpOn;
             swLed.checked = isLedOn;
+            swFan.checked = isFanOn;
 
             // --- Event Logging ---
             if(!isFirstUpdate) {
                 if(data.pump !== prevPump) {
-                    if(data.pump) addLog(`Bơm ĐƯỢC BẬT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "success");
-                    else addLog(`Bơm ĐÃ TẮT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "info");
+                    if(data.pump) addLog(`Máy bơm ĐƯỢC BẬT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "success");
+                    else addLog(`Máy bơm ĐÃ TẮT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "info");
                 }
-                if(data.water <= 10 && !prevWaterWarning) {
-                    addLog("CẢNH BÁO: Mức nước quá thấp!", "warning");
+                if(data.led !== prevLed) {
+                    if(data.led) addLog(`Đèn quang hợp ĐƯỢC BẬT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "success");
+                    else addLog(`Đèn quang hợp ĐÃ TẮT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "info");
+                }
+                if(data.fan !== prevFan) {
+                    if(data.fan) addLog(`Quạt thông gió ĐƯỢC BẬT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "success");
+                    else addLog(`Quạt thông gió ĐÃ TẮT (${isAutoMode ? 'Tự động' : 'Thủ công'})`, "info");
+                }
+                // Cảnh báo Nước
+                if(data.water <= 20 && !prevWaterWarning) {
+                    addLog(`CẢNH BÁO: Nước trong bể sắp cạn (${data.water}%)!`, "warning");
                     prevWaterWarning = true;
-                } else if (data.water > 10) {
+                } else if (data.water > 20 && prevWaterWarning) {
+                    addLog(`Nước đã được châm thêm (${data.water}%).`, "success");
                     prevWaterWarning = false;
                 }
-                if(data.temp > parseFloat($('set-temp').value) && !prevTempWarning) {
-                    addLog("CẢNH BÁO: Nhiệt độ quá cao (" + data.temp + "°C)!", "warning");
-                    prevTempWarning = true;
-                } else if (data.temp <= parseFloat($('set-temp').value)) {
-                    prevTempWarning = false;
+
+                // Cảnh báo Nhiệt độ
+                const tempHighLimit = parseFloat($('set-temp').value) + 2.0;
+                if(data.temp > tempHighLimit && !prevTempHighWarning) {
+                    addLog(`CẢNH BÁO: Nhiệt độ quá cao (${data.temp}°C)!`, "warning");
+                    prevTempHighWarning = true;
+                } else if (data.temp <= tempHighLimit && prevTempHighWarning) {
+                    addLog(`Nhiệt độ đã giảm xuống mức an toàn (${data.temp}°C).`, "success");
+                    prevTempHighWarning = false;
+                }
+
+                if(data.temp < 10.0 && !prevTempLowWarning) {
+                    addLog(`CẢNH BÁO: Nhiệt độ quá thấp (${data.temp}°C)!`, "warning");
+                    prevTempLowWarning = true;
+                } else if (data.temp >= 10.0 && prevTempLowWarning) {
+                    addLog(`Nhiệt độ đã tăng trở lại mức an toàn (${data.temp}°C).`, "success");
+                    prevTempLowWarning = false;
+                }
+
+                // Cảnh báo Độ ẩm đất
+                const soilLowLimit = parseInt($('set-soil').value) - 15;
+                const soilHighLimit = 70 + 15; // Ngưỡng cao mặc định 70
+                if ((data.soil < soilLowLimit || data.soil > soilHighLimit) && !prevSoilWarning) {
+                    addLog(`CẢNH BÁO: Độ ẩm đất bất thường (${data.soil}%)!`, "warning");
+                    prevSoilWarning = true;
+                } else if (data.soil >= soilLowLimit && data.soil <= soilHighLimit && prevSoilWarning) {
+                    addLog(`Độ ẩm đất đã ổn định (${data.soil}%).`, "success");
+                    prevSoilWarning = false;
+                }
+
+                // Cảnh báo Độ ẩm Không khí
+                if (data.hum > 85.0 && !prevHumHighWarning) {
+                    addLog(`CẢNH BÁO: Độ ẩm không khí quá cao (${data.hum}%)!`, "warning");
+                    prevHumHighWarning = true;
+                } else if (data.hum <= 85.0 && prevHumHighWarning) {
+                    addLog(`Độ ẩm không khí đã giảm xuống (${data.hum}%).`, "success");
+                    prevHumHighWarning = false;
+                }
+
+                if (data.hum < 35.0 && !prevHumLowWarning) {
+                    addLog(`CẢNH BÁO: Độ ẩm không khí quá thấp (${data.hum}%)!`, "warning");
+                    prevHumLowWarning = true;
+                } else if (data.hum >= 35.0 && prevHumLowWarning) {
+                    addLog(`Độ ẩm không khí đã phục hồi (${data.hum}%).`, "success");
+                    prevHumLowWarning = false;
                 }
             }
             prevPump = data.pump;
+            prevLed = data.led;
+            prevFan = data.fan;
             isFirstUpdate = false;
             // --- End Event Logging ---
 
@@ -1506,12 +1608,21 @@
                 ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
             $('led-auto-badge').style.color = isAutoMode
                 ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
+            $('fan-auto-badge').textContent = isAutoMode ? 'Tự động' : 'Thủ công';
+            $('fan-auto-badge').style.background = isAutoMode
+                ? 'var(--primary-container)' : 'var(--tertiary-fixed)';
+            $('fan-auto-badge').style.color = isAutoMode
+                ? 'var(--on-primary-container)' : 'var(--tertiary)';
+
             if (!isAutoMode) {
-                swPump.style.pointerEvents = 'auto';
-                swLed.style.pointerEvents = 'auto';
+                swPump.disabled = false;
+                swLed.disabled = false;
+                swFan.disabled = false;
             } else {
-                swPump.style.pointerEvents = 'none';
-                swLed.style.pointerEvents = 'none';
+                swPump.disabled = true;
+                swLed.disabled = true;
+                swFan.disabled = true;
             }
 
             // --- Soil Hero ---
@@ -1533,20 +1644,27 @@
             $('v-hum').textContent = hum.toFixed(1) + '%';
 
             const chipEl = $('climate-chip');
-            if (isPumpOn && temp > 35) {
-                chipEl.innerHTML = `<div class="alert-chip warning">
-                    <span class="material-symbols-outlined">local_fire_department</span>
-                    Tăng 20% thời gian tưới
-                </div>`;
-            } else if (isPumpOn && hum > 80) {
-                chipEl.innerHTML = `<div class="alert-chip caution">
-                    <span class="material-symbols-outlined">water</span>
-                    Giảm tưới (độ ẩm cao)
-                </div>`;
-            } else if (temp > 35) {
+            const tempHighLimit = parseFloat($('set-temp').value) + 2.0;
+
+            if (temp > tempHighLimit) {
                 chipEl.innerHTML = `<div class="alert-chip warning">
                     <span class="material-symbols-outlined">local_fire_department</span>
                     Cảnh báo nhiệt độ cao
+                </div>`;
+            } else if (temp < 10) {
+                chipEl.innerHTML = `<div class="alert-chip warning" style="background: var(--tertiary-fixed); color: var(--tertiary);">
+                    <span class="material-symbols-outlined">ac_unit</span>
+                    Cảnh báo nhiệt độ thấp
+                </div>`;
+            } else if (hum > 85) {
+                chipEl.innerHTML = `<div class="alert-chip caution">
+                    <span class="material-symbols-outlined">water</span>
+                    Độ ẩm không khí cao
+                </div>`;
+            } else if (hum < 35) {
+                chipEl.innerHTML = `<div class="alert-chip caution" style="background: var(--error-container); color: var(--error);">
+                    <span class="material-symbols-outlined">dry</span>
+                    Độ ẩm không khí thấp
                 </div>`;
             } else {
                 chipEl.innerHTML = `<div class="alert-chip info">
@@ -1555,8 +1673,29 @@
                 </div>`;
             }
 
-            // --- Lighting ---
+            // --- Lighting & Fan ---
             $('v-light').textContent = light.toLocaleString();
+
+            const fanIcon = $('fan-icon');
+            if (isFanOn) {
+                fanIcon.style.animation = 'spin 1s linear infinite';
+                fanIcon.style.color = 'var(--primary)';
+            } else {
+                fanIcon.style.animation = 'none';
+                fanIcon.style.color = 'inherit';
+            }
+
+            if (!$('spin-style')) {
+                const style = document.createElement('style');
+                style.id = 'spin-style';
+                style.innerHTML = `@keyframes spin { 100% { transform: rotate(360deg); } }`;
+                document.head.appendChild(style);
+            }
+
+            $('mode-status').textContent = isAutoMode ? 'Tự động' : 'Thủ công';
+            $('pump-status').textContent = isPumpOn ? 'Đang chạy' : 'Tắt';
+            $('led-status').textContent = isLedOn ? 'Đang bật' : 'Tắt';
+            if ($('fan-status')) $('fan-status').textContent = isFanOn ? 'Đang chạy' : 'Tắt';
 
             // --- Water Tank ---
             const tankCard = $('card-tank');
@@ -1683,7 +1822,10 @@
             });
         }
         
-        window.addEventListener('DOMContentLoaded', initChart);
+        window.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            renderLogs();
+        });
         
     </script>
 </body>
