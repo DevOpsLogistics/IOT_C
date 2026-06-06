@@ -1,6 +1,7 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <U8g2lib.h>
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
 #include <DHT.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -30,10 +31,11 @@ float threshold_temp_high  = 35.0;
 float threshold_hum_high   = 80.0;
 float threshold_hum_low    = 40.0;
 
-// OLED (U8g2 - tuong thich ca SSD1306 va SH1106)
-// Neu man hinh van loi, thu doi dong duoi thanh:
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
-// U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+// TFT ST7789 (240x240) SPI
+#define TFT_CS    5
+#define TFT_RST   4
+#define TFT_DC    2
+Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 DHT dht(PIN_DHT, DHTTYPE);
 
 // WiFi & MQTT
@@ -134,70 +136,96 @@ void reconnect() {
 }
 
 void displayScreen(int screen) {
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x10_tf);
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE);
 
   switch (screen) {
     case 0: // Man hinh 1: Do am dat & Muc nuoc
-      u8g2.drawStr(0, 10, "=== VUON THONG MINH ===");
+      tft.setTextColor(ST77XX_GREEN);
+      tft.setCursor(10, 10);
+      tft.print("VUON THONG MINH");
 
-      u8g2.setCursor(0, 24);
-      u8g2.print("Dat: ");
-      u8g2.print(g_soil);
-      u8g2.print("%");
-      u8g2.setCursor(64, 24);
-      u8g2.print("Nc: ");
-      u8g2.print(g_water);
-      u8g2.print("%");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 50);
+      tft.print("Dat: ");
+      if(g_soil < threshold_soil_low || g_soil > threshold_soil_high) tft.setTextColor(ST77XX_RED);
+      else tft.setTextColor(ST77XX_CYAN);
+      tft.print(g_soil);
+      tft.print("%");
 
-      u8g2.setCursor(0, 38);
-      u8g2.print("Bom:");
-      u8g2.print(isPumpOn ? "BAT" : "TAT");
-      u8g2.setCursor(64, 38);
-      u8g2.print("Den:");
-      u8g2.print(isLedOn ? "BAT" : "TAT");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 90);
+      tft.print("Nuoc:");
+      if(g_water <= threshold_water_low) tft.setTextColor(ST77XX_RED);
+      else tft.setTextColor(ST77XX_CYAN);
+      tft.print(g_water);
+      tft.print("%");
 
-      u8g2.setCursor(0, 52);
-      u8g2.print(isAutoMode ? "[TU DONG]" : "[THU CONG]");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 130);
+      tft.print("Bom: ");
+      if(isPumpOn) { tft.setTextColor(ST77XX_GREEN); tft.print("BAT"); }
+      else { tft.setTextColor(ST77XX_RED); tft.print("TAT"); }
+
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 170);
+      tft.print("Den: ");
+      if(isLedOn) { tft.setTextColor(ST77XX_GREEN); tft.print("BAT"); }
+      else { tft.setTextColor(ST77XX_RED); tft.print("TAT"); }
+
+      tft.setCursor(10, 210);
+      tft.setTextColor(ST77XX_YELLOW);
+      tft.print(isAutoMode ? "[ TU DONG ]" : "[THU CONG]");
       break;
 
     case 1: // Man hinh 2: Nhiet do & Do am & Anh sang
-      u8g2.drawStr(0, 10, "==== THOI TIET ====");
+      tft.setTextColor(ST77XX_GREEN);
+      tft.setCursor(30, 10);
+      tft.print("=== THOI TIET ===");
 
-      u8g2.setCursor(0, 26);
-      u8g2.print("Nhiet do: ");
-      u8g2.print(g_temp, 1);
-      u8g2.print(" C");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 60);
+      tft.print("Nhiet do: ");
+      tft.setTextColor(ST77XX_ORANGE);
+      tft.print(g_temp, 1);
+      tft.print(" C");
 
-      u8g2.setCursor(0, 40);
-      u8g2.print("Do am  : ");
-      u8g2.print(g_hum, 1);
-      u8g2.print(" %");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 110);
+      tft.print("Do am: ");
+      tft.setTextColor(ST77XX_CYAN);
+      tft.print(g_hum, 1);
+      tft.print(" %");
 
-      u8g2.setCursor(0, 54);
-      u8g2.print("Sang   : ");
-      u8g2.print(g_light);
-      u8g2.print(" %");
+      tft.setTextColor(ST77XX_WHITE);
+      tft.setCursor(10, 160);
+      tft.print("Anh sang: ");
+      tft.setTextColor(ST77XX_YELLOW);
+      tft.print(g_light);
+      tft.print(" %");
       break;
 
     case 2: // Man hinh 3: Canh bao
-      u8g2.drawStr(10, 10, "== CANH BAO ==");
+      tft.setTextColor(ST77XX_RED);
+      tft.setCursor(30, 10);
+      tft.print("=== CANH BAO ===");
 
-      u8g2.setCursor(0, 35);
+      tft.setCursor(10, 100);
       if (currentAlarm == ALARM_WATER) {
-        u8g2.print("  ! HET NUOC !");
+        tft.print(" ! HET NUOC !");
       } else if (currentAlarm == ALARM_TEMP) {
-        u8g2.print("  ! NHIET DO CAO !");
+        tft.print(" ! NHIET DO CAO !");
       } else if (currentAlarm == ALARM_SOIL) {
-        u8g2.print("  ! DAT KHO !");
+        tft.print(" ! DAT KHO !");
       } else if (currentAlarm == ALARM_HUM) {
-        u8g2.print("  ! DO AM THAP !");
+        tft.print(" ! DO AM THAP !");
       } else {
-        u8g2.print("  He thong OK");
+        tft.setTextColor(ST77XX_GREEN);
+        tft.print("  He thong OK");
       }
       break;
   }
-  u8g2.sendBuffer();
 }
 
 void setup() {
@@ -228,23 +256,30 @@ void setup() {
 
   dht.begin();
 
-  // Khoi tao OLED (U8g2)
-  Wire.begin(); // SDA=21, SCL=22
-  u8g2.begin();
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_6x10_tf);
-  u8g2.drawStr(10, 28, "SMART GARDEN");
-  u8g2.drawStr(16, 44, "Connecting...");
-  u8g2.sendBuffer();
+  // Khoi tao TFT (ST7789)
+  tft.init(240, 240); // Do phan giai 240x240
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextSize(3);
+  tft.setTextColor(ST77XX_GREEN);
+  tft.setCursor(10, 80);
+  tft.print("SMART");
+  tft.setCursor(10, 120);
+  tft.print("GARDEN");
+
+  tft.setTextSize(2);
+  tft.setTextColor(ST77XX_WHITE);
+  tft.setCursor(10, 180);
+  tft.print("Connecting...");
 
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(100);
   }
   
-  u8g2.clearBuffer();
-  u8g2.drawStr(6, 36, "WiFi Connected!");
-  u8g2.sendBuffer();
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextColor(ST77XX_GREEN);
+  tft.setCursor(10, 110);
+  tft.print("WiFi Connected!");
   delay(1000);
 
   client.setServer(mqtt_server, mqtt_port);
