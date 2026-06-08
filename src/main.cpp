@@ -1,19 +1,20 @@
 #include <Arduino.h>
-#include <SPI.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_ST7789.h>
+#include <Adafruit_SH110X.h>
 #include <DHT.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
+#include <BH1750.h> // Thu vien cho cam bien anh sang BH1750 I2C
 // ==== CHAN KET NOI (ESP32-C3 Super Mini 16 chan) ====
 // ADC chi co tren GPIO 0-4 cua ESP32-C3
 #define PIN_SOIL       0   // ADC - Cam bien do am dat
 #define PIN_WATER      1   // ADC - Cam bien muc nuoc
-#define PIN_LIGHT      3   // ADC - Cam bien anh sang (LDR)
-#define PIN_DHT        4   // Digital - DHT11 nhiet do & do am
+// ==== KHAI BAO DHT11 ====
+#define PIN_DHT        4   // Digital In - Cam bien nhiet do/do am (DHT11)
 #define PIN_PUMP       8   // Digital Out - Relay may bom (Active Low)
 #define PIN_LED_GROW   20  // Digital Out - Den LED quang hop
 #define PIN_SERVO      10  // PWM - Servo quat
@@ -30,19 +31,18 @@ float threshold_temp_high  = 35.0;
 float threshold_hum_high   = 80.0;
 float threshold_hum_low    = 40.0;
 
-// TFT ST7789 (240x240) - Software SPI (chi dinh chan ro rang)
-// SCK = GPIO6, MOSI/SDA = GPIO7
-// CS -> noi xuong GND (vi het chan), RST -> GPIO 5
-#define TFT_DC    2
-#define TFT_MOSI  7
-#define TFT_SCLK  6
-#define TFT_RST   5
-Adafruit_ST7789 tft = Adafruit_ST7789(-1, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+// OLED 1.3 inch (SH1106) I2C
+// SCK/SCL = GPIO6, MOSI/SDA = GPIO7
+#define I2C_SDA 7
+#define I2C_SCL 6
+Adafruit_SH1106G display = Adafruit_SH1106G(128, 64, &Wire, -1);
+// DHT & LDR (Bay gio dung BH1750 I2C)
 DHT dht(PIN_DHT, DHTTYPE);
+BH1750 lightMeter;
 
 // WiFi & MQTT
-const char* ssid = "Best Giay 01";
-const char* password = "12345678";
+const char* ssid = "CFVGHCM";
+const char* password = "12345@bc";
 
 const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
@@ -147,96 +147,76 @@ void reconnect() {
 }
 
 void displayScreen(int screen) {
-  tft.fillScreen(ST77XX_BLACK);
-  tft.setTextSize(2);
-  tft.setTextColor(ST77XX_WHITE);
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SH110X_WHITE);
 
   switch (screen) {
     case 0: // Man hinh 1: Do am dat & Muc nuoc
-      tft.setTextColor(ST77XX_GREEN);
-      tft.setCursor(10, 10);
-      tft.print("VUON THONG MINH");
+      display.setCursor(18, 0);
+      display.print("VUON THONG MINH");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 50);
-      tft.print("Dat: ");
-      if(g_soil < threshold_soil_low || g_soil > threshold_soil_high) tft.setTextColor(ST77XX_RED);
-      else tft.setTextColor(ST77XX_CYAN);
-      tft.print(g_soil);
-      tft.print("%");
+      display.setCursor(0, 15);
+      display.print("Dat: ");
+      display.print(g_soil);
+      display.print("%");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 90);
-      tft.print("Nuoc:");
-      if(g_water <= threshold_water_low) tft.setTextColor(ST77XX_RED);
-      else tft.setTextColor(ST77XX_CYAN);
-      tft.print(g_water);
-      tft.print("%");
+      display.setCursor(0, 25);
+      display.print("Nuoc: ");
+      display.print(g_water);
+      display.print("%");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 130);
-      tft.print("Bom: ");
-      if(isPumpOn) { tft.setTextColor(ST77XX_GREEN); tft.print("BAT"); }
-      else { tft.setTextColor(ST77XX_RED); tft.print("TAT"); }
+      display.setCursor(0, 35);
+      display.print("Bom: ");
+      display.print(isPumpOn ? "BAT" : "TAT");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 170);
-      tft.print("Den: ");
-      if(isLedOn) { tft.setTextColor(ST77XX_GREEN); tft.print("BAT"); }
-      else { tft.setTextColor(ST77XX_RED); tft.print("TAT"); }
+      display.setCursor(0, 45);
+      display.print("Den: ");
+      display.print(isLedOn ? "BAT" : "TAT");
 
-      tft.setCursor(10, 210);
-      tft.setTextColor(ST77XX_YELLOW);
-      tft.print(isAutoMode ? "[ TU DONG ]" : "[THU CONG]");
+      display.setCursor(0, 55);
+      display.print(isAutoMode ? "[ TU DONG ]" : "[THU CONG]");
       break;
 
     case 1: // Man hinh 2: Nhiet do & Do am & Anh sang
-      tft.setTextColor(ST77XX_GREEN);
-      tft.setCursor(30, 10);
-      tft.print("=== THOI TIET ===");
+      display.setCursor(15, 0);
+      display.print("=== THOI TIET ===");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 60);
-      tft.print("Nhiet do: ");
-      tft.setTextColor(ST77XX_ORANGE);
-      tft.print(g_temp, 1);
-      tft.print(" C");
+      display.setCursor(0, 20);
+      display.print("Nhiet do: ");
+      display.print(g_temp, 1);
+      display.print(" C");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 110);
-      tft.print("Do am: ");
-      tft.setTextColor(ST77XX_CYAN);
-      tft.print(g_hum, 1);
-      tft.print(" %");
+      display.setCursor(0, 35);
+      display.print("Do am: ");
+      display.print(g_hum, 1);
+      display.print(" %");
 
-      tft.setTextColor(ST77XX_WHITE);
-      tft.setCursor(10, 160);
-      tft.print("Anh sang: ");
-      tft.setTextColor(ST77XX_YELLOW);
-      tft.print(g_light);
-      tft.print(" %");
+      display.setCursor(0, 50);
+      display.print("Anh sang: ");
+      display.print(g_light);
+      display.print(" %");
       break;
 
     case 2: // Man hinh 3: Canh bao
-      tft.setTextColor(ST77XX_RED);
-      tft.setCursor(30, 10);
-      tft.print("=== CANH BAO ===");
+      display.setCursor(15, 0);
+      display.print("=== CANH BAO ===");
 
-      tft.setCursor(10, 100);
+      display.setCursor(0, 25);
       if (currentAlarm == ALARM_WATER) {
-        tft.print(" ! HET NUOC !");
+        display.print(" ! HET NUOC !");
       } else if (currentAlarm == ALARM_TEMP) {
-        tft.print(" ! NHIET DO CAO !");
+        display.print(" ! NHIET DO CAO !");
       } else if (currentAlarm == ALARM_SOIL) {
-        tft.print(" ! DAT KHO !");
+        display.print(" ! DAT KHO !");
       } else if (currentAlarm == ALARM_HUM) {
-        tft.print(" ! DO AM THAP !");
+        display.print(" ! DO AM THAP !");
       } else {
-        tft.setTextColor(ST77XX_GREEN);
-        tft.print("  He thong OK");
+        display.print("  He thong OK");
       }
       break;
   }
+  display.display();
 }
 
 void setup() {
@@ -272,34 +252,49 @@ void setup() {
 
   pinMode(PIN_SOIL, INPUT);
   pinMode(PIN_WATER, INPUT);
-  pinMode(PIN_LIGHT, INPUT);
 
   dht.begin();
+  
+  // Khoi tao OLED 1.3" (SH1106)
+  Wire.begin(I2C_SDA, I2C_SCL);
+  display.begin(0x3C, true); // Dia chi I2C cua OLED la 0x3C
+  
+  // Khoi tao BH1750 tren cung bus I2C
+  if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
+    Serial.println("BH1750 da khoi tao thanh cong");
+  } else {
+    Serial.println("Loi: Khong tim thay cam bien BH1750!");
+  }
 
-  // Khoi tao TFT (ST7789)
-  tft.init(240, 240); // Do phan giai 240x240
-  tft.fillScreen(ST77XX_BLACK);
-  tft.setTextSize(3);
-  tft.setTextColor(ST77XX_GREEN);
-  tft.setCursor(10, 80);
-  tft.print("SMART");
-  tft.setCursor(10, 120);
-  tft.print("GARDEN");
+  display.clearDisplay();
+  display.setTextSize(2);
+  display.setTextColor(SH110X_WHITE);
+  display.setCursor(35, 10);
+  display.print("SMART");
+  display.setCursor(30, 35);
+  display.print("GARDEN");
+  display.display();
+  delay(1000);
 
-  tft.setTextSize(2);
-  tft.setTextColor(ST77XX_WHITE);
-  tft.setCursor(10, 180);
-  tft.print("Connecting...");
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setCursor(20, 30);
+  display.print("Connecting WiFi...");
+  display.display();
 
+  // === TANG CUONG DO ON DINH WIFI ===
+  WiFi.setSleep(false); // Tat che do tiet kiem nang luong WiFi (giup song manh va on dinh lien tuc)
+  WiFi.setAutoReconnect(true); // Tu dong ket noi lai neu rot mang
   WiFi.begin(ssid, password);
+  
   while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
+    delay(500);
   }
   
-  tft.fillScreen(ST77XX_BLACK);
-  tft.setTextColor(ST77XX_GREEN);
-  tft.setCursor(10, 110);
-  tft.print("WiFi Connected!");
+  display.clearDisplay();
+  display.setCursor(20, 30);
+  display.print("WiFi Connected!");
+  display.display();
   delay(1000);
 
   client.setServer(mqtt_server, mqtt_port);
@@ -309,10 +304,15 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  if (!client.connected()) {
-    reconnect();
+  // Kiem tra WiFi truoc, co WiFi thi moi kiem tra MQTT
+  if (WiFi.status() != WL_CONNECTED) {
+    // Doi WiFi tu dong ket noi lai (vi da bat AutoReconnect)
+  } else {
+    if (!client.connected()) {
+      reconnect();
+    }
+    client.loop();
   }
-  client.loop();
 
   // Doc cam bien moi giay
   if (currentMillis - lastReadTime >= 1000) {
@@ -321,18 +321,26 @@ void loop() {
     float h = dht.readHumidity();
     float t = dht.readTemperature();
 
+    // Doc ADC
     int rawSoil = analogRead(PIN_SOIL);
     int rawWater = analogRead(PIN_WATER);
-    int rawLight = analogRead(PIN_LIGHT);
-
-    // Đảo ngược mapping: 0 -> 100, 4095 -> 0 
-    // Vì mặc định của Wokwi: vặn hết sang phải (xuôi kim đồng hồ) điện áp tiến về 0
-    g_soil = map(rawSoil, 0, 4095, 100, 0);
-    g_water = map(rawWater, 0, 4095, 100, 0);
     
-    // Cảm biến ánh sáng LDR: giá trị raw càng lớn (kéo về bên trái) tức là càng tối
-    // Nên ta map lại thành phần trăm ánh sáng: 0 (tối) -> 100% (sáng)
-    g_light = map(rawLight, 0, 4095, 100, 0);
+    // Doc cam bien anh sang BH1750 (don vi Lux)
+    float lux = lightMeter.readLightLevel();
+
+    // Cảm biến thực tế hoạt động khác trên web mô phỏng:
+    // 1. Cảm biến độ ẩm đất: Khô = giá trị ADC cao (~4095), Ướt = giá trị ADC thấp (~1000)
+    g_soil = map(rawSoil, 4095, 1000, 0, 100);
+    g_soil = constrain(g_soil, 0, 100); // Đảm bảo không vượt quá 0-100%
+    
+    // 2. Cảm biến mực nước: Khô (không có nước) = 0, Ngập nước = ADC cao (~3000)
+    g_water = map(rawWater, 0, 3000, 0, 100);
+    g_water = constrain(g_water, 0, 100);
+    
+    // 3. Cảm biến ánh sáng BH1750 (lux): trong phong thuong ~0-1000 lux
+    // Map tu 0-1000 lux sang 0-100%
+    g_light = map(lux, 0, 1000, 0, 100);
+    g_light = constrain(g_light, 0, 100);
 
     if (isnan(h) || isnan(t)) {
       h = 0;
