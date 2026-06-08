@@ -8,39 +8,41 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
-// ==== CHAN KET NOI (Cấu hình cho ESP32 Thường) ====
-#define PIN_SOIL       32
-#define PIN_WATER      33
-#define PIN_LIGHT      34
-#define PIN_DHT        14
-#define PIN_PUMP       25
-#define PIN_LED_GROW   26
-#define PIN_SERVO      27
-#define PIN_BUZZER     13
-#define PIN_BTN        19
-
-// Ghi chú: Chân I2C mặc định của ESP32 là SDA = 21, SCL = 22
+// ==== CHAN KET NOI (ESP32-C3 Super Mini 16 chan) ====
+// ADC chi co tren GPIO 0-4 cua ESP32-C3
+#define PIN_SOIL       0   // ADC - Cam bien do am dat
+#define PIN_WATER      1   // ADC - Cam bien muc nuoc
+#define PIN_LIGHT      3   // ADC - Cam bien anh sang (LDR)
+#define PIN_DHT        4   // Digital - DHT11 nhiet do & do am
+#define PIN_PUMP       8   // Digital Out - Relay may bom (Active Low)
+#define PIN_LED_GROW   20  // Digital Out - Den LED quang hop
+#define PIN_SERVO      10  // PWM - Servo quat
+#define PIN_BUZZER     21  // Digital Out - Coi bao dong
+#define PIN_BTN        9   // Digital In - Nut bam (chung voi nut BOOT)
 
 // ==== THONG SO HE THONG ====
 #define DHTTYPE DHT11
 int threshold_soil_low   = 40;
 int threshold_soil_high  = 70;
 int threshold_water_low  = 10;
-int threshold_light_low  = 30; // 30% ánh sáng
+int threshold_light_low  = 30;
 float threshold_temp_high  = 35.0;
 float threshold_hum_high   = 80.0;
 float threshold_hum_low    = 40.0;
 
-// TFT ST7789 (240x240) SPI
-#define TFT_CS    5
-#define TFT_RST   4
+// TFT ST7789 (240x240) - Software SPI (chi dinh chan ro rang)
+// SCK = GPIO6, MOSI/SDA = GPIO7
+// CS -> noi xuong GND (vi het chan), RST -> GPIO 5
 #define TFT_DC    2
-Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+#define TFT_MOSI  7
+#define TFT_SCLK  6
+#define TFT_RST   5
+Adafruit_ST7789 tft = Adafruit_ST7789(-1, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 DHT dht(PIN_DHT, DHTTYPE);
 
 // WiFi & MQTT
-const char* ssid = "Thuy An";
-const char* password = "thanh22888";
+const char* ssid = "Best Giay 01";
+const char* password = "12345678";
 
 const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
@@ -96,6 +98,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     message += (char)payload[i];
   }
   
+  Serial.print("[MQTT CMD] Nhan lenh: ");
+  Serial.println(message);
+
   if (String(topic) == topic_cmd) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, message);
@@ -103,12 +108,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       String cmd = doc["cmd"].as<String>();
       if (cmd == "auto") {
         isAutoMode = doc["value"].as<bool>();
+        Serial.printf(">>> Chuyen che do: %s\n", isAutoMode ? "TU DONG" : "THU CONG");
       } else if (cmd == "pump" && !isAutoMode) {
         isPumpOn = doc["value"].as<bool>();
+        Serial.printf(">>> Pump: %s\n", isPumpOn ? "BAT" : "TAT");
+      } else if (cmd == "pump" && isAutoMode) {
+        Serial.println(">>> Pump: BI KHOA vi dang o che do TU DONG!");
       } else if (cmd == "led" && !isAutoMode) {
         isLedOn = doc["value"].as<bool>();
+        Serial.printf(">>> LED: %s\n", isLedOn ? "BAT" : "TAT");
       } else if (cmd == "fan" && !isAutoMode) {
         isFanOn = doc["value"].as<bool>();
+        Serial.printf(">>> Fan: %s\n", isFanOn ? "BAT" : "TAT");
       } else if (cmd == "set_threshold_soil") {
         threshold_soil_low = doc["value"].as<int>();
       } else if (cmd == "set_threshold_temp") {
@@ -238,15 +249,24 @@ void setup() {
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_BTN, INPUT_PULLUP);
   
-  digitalWrite(PIN_PUMP, LOW);
+  digitalWrite(PIN_PUMP, HIGH);      // Active Low Relay: HIGH = TAT bom
   digitalWrite(PIN_LED_GROW, LOW);
   digitalWrite(PIN_BUZZER, LOW);
 
-  // Setup cho ESP32Servo (cần thiết cho core mới)
+  // === TEST RELAY: Keu 'Cach' 2 lan khi khoi dong ===
+  Serial.println("[TEST] Bat bom thu...");
+  digitalWrite(PIN_PUMP, LOW);   // Active Low: LOW = BAT relay
+  delay(300);
+  digitalWrite(PIN_PUMP, HIGH);  // Active Low: HIGH = TAT relay
+  delay(300);
+  digitalWrite(PIN_PUMP, LOW);   // BAT
+  delay(300);
+  digitalWrite(PIN_PUMP, HIGH);  // TAT (trang thai cuoi: bom TAT)
+  Serial.println("[TEST] Xong test bom.");
+
+  // Setup cho ESP32Servo (ESP32-C3 co 4 timer, 6 kenh LEDC)
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
-  ESP32PWM::allocateTimer(2);
-  ESP32PWM::allocateTimer(3);
   fanServo.setPeriodHertz(50);
   fanServo.attach(PIN_SERVO, 500, 2400);
 
@@ -378,7 +398,7 @@ void loop() {
       currentAlarm = ALARM_HUM;   // Độ ẩm không khí quá cao (>85) hoặc quá thấp (<35)
     }
 
-    digitalWrite(PIN_PUMP, isPumpOn ? HIGH : LOW);
+    digitalWrite(PIN_PUMP, isPumpOn ? LOW : HIGH); // Active Low Relay: LOW = BAT, HIGH = TAT
     digitalWrite(PIN_LED_GROW, isLedOn ? HIGH : LOW);
 
     // Gui du lieu qua MQTT
